@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	api "github.com/Bluore/ot-practice/api"
+	"github.com/Bluore/ot-practice/logger"
 )
 
 var (
@@ -14,6 +15,8 @@ var (
 
 func main() {
 	flag.Parse()
+
+	logger.InitLogger()
 
 	server := http.Server{
 		Addr:    fmt.Sprintf(":%d", *SERVERPORT),
