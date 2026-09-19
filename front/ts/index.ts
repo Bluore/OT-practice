@@ -1,4 +1,11 @@
+var ws: WebSocket;
 
+(function () {
+    var userIdInput = document.getElementById("user_id_input") as HTMLInputElement;
+    if (userIdInput) {
+        userIdInput.value = crypto.randomUUID();
+    }
+})()
 
 function pingServer() {
     fetch("/healthy").then((res) => {
@@ -7,7 +14,7 @@ function pingServer() {
 }
 
 function linkServer() {
-    let ws = new WebSocket("ws://localhost:8888/ot");
+    ws = new WebSocket("ws://localhost:8888/ot");
     ws.onopen = () => {
         console.log("WebSocket connection established.");
     }
@@ -16,5 +23,25 @@ function linkServer() {
         console.log("Received message from server:", event.data);
     };
     
-    ws.OPEN
+}
+
+function sendInitMsg() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn("WebSocket is not connected, please link server first.");
+        return;
+    }
+
+    var userIdInput = document.getElementById("user_id_input") as HTMLInputElement;
+    var userNameInput = document.querySelector("user_name_input") as HTMLInputElement;
+
+    var userId = userIdInput ? userIdInput.value.trim() : "";
+    var userName = userNameInput ? userNameInput.value.trim() : "";
+
+    var initMessage = {
+        user_id: userId,
+        user_name: userName
+    };
+
+    ws.send(JSON.stringify(initMessage));
+    console.log("Init message sent:", initMessage);
 }

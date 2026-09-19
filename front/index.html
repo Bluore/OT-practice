@@ -4,12 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OT-practice</title>
-    <script src="./ts/index.js"></script>
+    <script src="./ts/index.js" defer></script>
 </head>
 <body>
     <button id="pingServer" onclick="pingServer()">ping server</button>
+
+    <div id="start-area">
+        <button id="linkServer" onclick="linkServer()">link server</button>
+    </div>   
         
-    <button id="linkServer" onclick="linkServer()">link server</button>
+    <div id="init-server-area">
+            
+        <input type="text" id="user_name_input">
+
+        <input type="text" id="user_id_input" disabled>
+        
+        <button id="send-init-msg" onclick="sendInitMsg()">send init msg</button>
+    </div>
+        
+    <div id="edit-area">
+            
+        
+    </div>
         
 </br>
 
