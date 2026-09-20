@@ -76,7 +76,7 @@ func (o *Operator) MarshalJSON() ([]byte, error) {
 		case Retain:
 			ops = append(ops, v.N)
 		case Delete:
-			ops = append(ops, v.N)
+			ops = append(ops, -v.N)
 		}
 	}
 
@@ -151,6 +151,7 @@ func (oi *operatorIterator) next() {
 	if oi.idx >= oi.len() {
 		return
 	}
+	oi.cur = nil
 	oi.idx++
 	return
 }
@@ -231,18 +232,12 @@ func (aOp *Operator) Transform(bOp *Operator) (*Operator, *Operator, error) {
 		if a, ok1 := aIt.getDelete(); ok1 {
 			if b, ok2 := bIt.getDelete(); ok2 {
 				if a.N == b.N {
-					aPrime.Ops = append(aPrime.Ops, a)
-					bPrime.Ops = append(bPrime.Ops, b)
 					aIt.next()
 					bIt.next()
 				} else if a.N > b.N {
-					aPrime.Ops = append(aPrime.Ops, NewDelete(b.N))
-					bPrime.Ops = append(bPrime.Ops, b)
 					aIt.refesh(NewDelete(a.N - b.N))
 					bIt.next()
 				} else {
-					aPrime.Ops = append(aPrime.Ops, a)
-					bPrime.Ops = append(bPrime.Ops, NewDelete(a.N))
 					aIt.next()
 					bIt.refesh(NewDelete(b.N - a.N))
 				}
@@ -253,15 +248,15 @@ func (aOp *Operator) Transform(bOp *Operator) (*Operator, *Operator, error) {
 		if a, ok1 := aIt.getDelete(); ok1 {
 			if b, ok2 := bIt.getRetain(); ok2 {
 				if a.N == b.N {
-					bPrime.Ops = append(bPrime.Ops, a)
+					aPrime.Ops = append(aPrime.Ops, a)
 					aIt.next()
 					bIt.next()
 				} else if a.N > b.N {
-					bPrime.Ops = append(bPrime.Ops, NewDelete(a.N-b.N))
+					aPrime.Ops = append(aPrime.Ops, NewDelete(b.N))
 					aIt.refesh(NewDelete(a.N - b.N))
 					bIt.next()
 				} else {
-					bPrime.Ops = append(bPrime.Ops, NewDelete(b.N-a.N))
+					aPrime.Ops = append(aPrime.Ops, NewDelete(a.N))
 					aIt.next()
 					bIt.refesh(NewRetain(b.N - a.N))
 				}
@@ -272,15 +267,15 @@ func (aOp *Operator) Transform(bOp *Operator) (*Operator, *Operator, error) {
 		if a, ok1 := aIt.getRetain(); ok1 {
 			if b, ok2 := bIt.getDelete(); ok2 {
 				if a.N == b.N {
-					aPrime.Ops = append(bPrime.Ops, b)
+					bPrime.Ops = append(bPrime.Ops, b)
 					aIt.next()
 					bIt.next()
 				} else if a.N > b.N {
-					aPrime.Ops = append(bPrime.Ops, NewDelete(a.N-b.N))
+					bPrime.Ops = append(bPrime.Ops, NewDelete(b.N))
 					aIt.refesh(NewRetain(a.N - b.N))
 					bIt.next()
 				} else {
-					aPrime.Ops = append(bPrime.Ops, NewDelete(b.N-a.N))
+					bPrime.Ops = append(aPrime.Ops, NewDelete(a.N))
 					aIt.next()
 					bIt.refesh(NewRetain(b.N - a.N))
 				}
@@ -288,7 +283,68 @@ func (aOp *Operator) Transform(bOp *Operator) (*Operator, *Operator, error) {
 			}
 		}
 
+		if a, ok1 := aIt.getRetain(); ok1 {
+			if b, ok2 := bIt.getRetain(); ok2 {
+				if a.N == b.N {
+					aPrime.Ops = append(aPrime.Ops, a)
+					bPrime.Ops = append(bPrime.Ops, b)
+					aIt.next()
+					bIt.next()
+				} else if a.N > b.N {
+					aPrime.Ops = append(aPrime.Ops, NewRetain(b.N))
+					bPrime.Ops = append(bPrime.Ops, b)
+					aIt.refesh(NewRetain(a.N - b.N))
+					bIt.next()
+				} else {
+					aPrime.Ops = append(aPrime.Ops, a)
+					bPrime.Ops = append(bPrime.Ops, NewRetain(a.N))
+					aIt.next()
+					bIt.refesh(NewRetain(b.N - a.N))
+				}
+				continue
+			}
+		}
+
+		if aIt.get() == nil {
+			if b, ok := bIt.getRetain(); ok {
+				aPrime.Ops = append(aPrime.Ops, b)
+				bPrime.Ops = append(bPrime.Ops, b)
+				bIt.next()
+				continue
+			}
+		}
+
+		if bIt.get() == nil {
+			if a, ok := aIt.getRetain(); ok {
+				aPrime.Ops = append(aPrime.Ops, a)
+				bPrime.Ops = append(bPrime.Ops, a)
+				aIt.next()
+				continue
+			}
+		}
+
 		logger.L.Debug("unsupport operator")
 	}
 	return aPrime, bPrime, nil
+}
+
+func (oper *Operator) Apply(text []byte) []byte {
+	newText := make([]byte, 0)
+	idx := 0
+
+	for _, op := range oper.Ops {
+		switch v := op.(type) {
+		case Insert:
+			newText = append(newText, []byte(v.Str)...)
+		case Retain:
+			if idx+v.N > len(text) {
+				break
+			}
+			newText = append(newText, text[idx:idx+v.N]...)
+			idx += v.N
+		case Delete:
+			idx += v.N
+		}
+	}
+	return newText
 }
