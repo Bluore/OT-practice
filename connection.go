@@ -65,8 +65,7 @@ func (c *Connection) Handle() {
 		case <-c.Notify:
 			continue
 		case message := <-c.Inbox:
-			_ = message
-			panic("")
+			c.handlerMessage(message)
 		}
 	}
 
@@ -84,6 +83,11 @@ func (c *Connection) readMessage() {
 
 		_, messageRaw, err := c.Conn.ReadMessage()
 		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseAbnormalClosure, websocket.CloseGoingAway) {
+				c.Cancel()
+				return
+			}
+
 			logger.L.Error("error to read msg", zap.Error(err))
 			return
 		}
@@ -96,5 +100,11 @@ func (c *Connection) readMessage() {
 		}
 
 		c.Inbox <- message
+	}
+}
+
+func (c *Connection) handlerMessage(message protocol.ClientMessage) {
+	if message.Edit != nil {
+		c.Ot.applyEdit(message.Edit.Operator)
 	}
 }

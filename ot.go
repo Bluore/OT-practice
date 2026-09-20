@@ -5,6 +5,7 @@ import (
 
 	"github.com/Bluore/ot-practice/logger"
 	"github.com/Bluore/ot-practice/protocol"
+	"go.uber.org/zap"
 )
 
 var (
@@ -52,4 +53,10 @@ func (o *Ot) Broadcase(msg protocol.ServerMessage) {
 			logger.L.Info("error to send msg")
 		}
 	}
+}
+
+func (o *Ot) applyEdit(oper protocol.Operator) {
+	// todo
+
+	logger.L.Info("apply edit", zap.Any("oper", oper))
 }

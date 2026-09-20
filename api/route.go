@@ -8,6 +8,7 @@ import (
 	"github.com/Bluore/ot-practice/logger"
 	"github.com/Bluore/ot-practice/protocol"
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 var (
@@ -22,7 +23,7 @@ var (
 func HandlerRoute() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthy", healohyHandler)
-	mux.Handle("/front/", http.StripPrefix("/front/", fsHandler))
+	mux.Handle("/", http.StripPrefix("/", fsHandler))
 	mux.HandleFunc("/ot", otHandler)
 
 	return mux
@@ -40,19 +41,26 @@ func otHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer conn.Close()
-	logger.L.Info("join user")
+	logger.L.Info("wait user")
 
 	var initMessage protocol.ClientInitMessage
 	for {
 		_, rawMessage, err := conn.ReadMessage()
 		if err != nil {
-			logger.L.Error("error to read message")
+			if websocket.IsCloseError(
+				err,
+				websocket.CloseAbnormalClosure,
+				websocket.CloseGoingAway,
+			) {
+				return
+			}
+			logger.L.Error("error to read message", zap.Error(err))
 			return
 		}
 
 		err = json.Unmarshal(rawMessage, &initMessage)
 		if err != nil {
-			logger.L.Info("error to unmarshal init message")
+			logger.L.Info("error to unmarshal init message", zap.Error(err))
 			continue
 		}
 		break
@@ -69,6 +77,8 @@ func otHandler(w http.ResponseWriter, r *http.Request) {
 		otpractice.OtClient,
 		r.Context(),
 	)
+
+	logger.L.Info("join user", zap.Any("user", initMessage))
 
 	connHandler.Handle()
 }

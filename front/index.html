@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OT-practice</title>
-    <script src="./ts/index.js" defer></script>
+    <script type="module" src="./ts/index.js" defer></script>
 </head>
 <body>
     <button id="pingServer" onclick="pingServer()">ping server</button>
@@ -23,8 +23,25 @@
     </div>
         
     <div id="edit-area">
+
+        <textarea id="edit_msg_textarea" rows="6" cols="60" placeholder="input content..."></textarea>
             
+        <br class="">
+
+        <button id="calculate-operator">calculate operator</button>
+
+        <button id="send-edit-operator">send operator</button>
+
+        <button id="receive-edit-operator">receive operator</button>
+
+    </div>
         
+    <div id="logger" class="logger-area">
+
+        <button id="clear-log" onclick="clearLog()">clear log</button>
+
+        <div id="log_list" class="log-list"></div>
+
     </div>
         
 </br>
