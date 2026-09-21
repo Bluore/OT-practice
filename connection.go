@@ -105,6 +105,6 @@ func (c *Connection) readMessage() {
 
 func (c *Connection) handlerMessage(message protocol.ClientMessage) {
 	if message.Edit != nil {
-		c.Ot.applyEdit(message.Edit.Operator)
+		c.Ot.applyEdit(&message.Edit.Operator)
 	}
 }

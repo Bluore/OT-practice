@@ -324,6 +324,7 @@ func (aOp *Operator) Transform(bOp *Operator) (*Operator, *Operator, error) {
 		}
 
 		logger.L.Debug("unsupport operator")
+		return nil,nil,fmt.Errorf("unsupport operator")
 	}
 	return aPrime, bPrime, nil
 }
