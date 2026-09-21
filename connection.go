@@ -3,9 +3,9 @@ package otpractice
 import (
 	"context"
 	"encoding/json"
-	"sync"
 
 	"github.com/Bluore/ot-practice/logger"
+	"github.com/Bluore/ot-practice/model"
 	"github.com/Bluore/ot-practice/protocol"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -13,15 +13,15 @@ import (
 
 type Connection struct {
 	UserID     string
-	UserDetail User
+	UserDetail model.User
 	Conn       *websocket.Conn
 	Ot         *Ot
 	Ctx        context.Context
 	UserCxt    context.Context
 	Cancel     context.CancelFunc
 	Inbox      chan protocol.ClientMessage
-	SendMu     sync.Mutex
-	Notify     chan struct{}
+	Notify     <-chan struct{}
+	Reversion  uint32
 }
 
 func NewConnection(
@@ -34,7 +34,7 @@ func NewConnection(
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Connection{
 		UserID: userID,
-		UserDetail: User{
+		UserDetail: model.User{
 			ID:   userID,
 			Name: userName,
 		},
@@ -44,7 +44,6 @@ func NewConnection(
 		UserCxt: userCtx,
 		Cancel:  cancel,
 		Inbox:   make(chan protocol.ClientMessage),
-		SendMu:  sync.Mutex{},
 	}
 }
 
@@ -52,10 +51,14 @@ func (c *Connection) Handle() {
 	var sendChannel = make(chan protocol.ServerMessage, 10)
 	c.Ot.ConnectUser(c.UserID, c.UserDetail, sendChannel)
 
+	c.sendInitMassage()
+
 	go c.readMessage()
 
 	for {
-		// todo check status, history
+		c.Notify = c.Ot.GetNotify()
+
+		c.checkAndSendEditHistory()
 
 		select {
 		case <-c.Ctx.Done():
@@ -105,6 +108,54 @@ func (c *Connection) readMessage() {
 
 func (c *Connection) handlerMessage(message protocol.ClientMessage) {
 	if message.Edit != nil {
+		message.Edit.Operator.Reversion = message.Edit.Reversion
 		c.Ot.applyEdit(&message.Edit.Operator)
 	}
+}
+
+func (c *Connection) checkAndSendEditHistory() {
+	if c.Reversion >= c.Ot.GetReversion() {
+		return
+	}
+
+	historyEdit, newReversion := c.Ot.GetHistory(c.Reversion)
+
+	msg := protocol.ServerMessage{
+		Edit: &protocol.ServerEditMsg{
+			Operator:  historyEdit,
+			Reversion: newReversion,
+		},
+	}
+
+	if err := c.SendMassage(msg); err != nil {
+		return
+	}
+
+	c.Reversion = newReversion
+
+}
+
+func (c *Connection) SendMassage(msg protocol.ServerMessage) error {
+	rawMsg, err := json.Marshal(msg)
+	if err != nil {
+		logger.L.Error("server edit marshal error", zap.Any("edit msg", msg))
+		return err
+	}
+
+	err = c.Conn.WriteMessage(websocket.TextMessage, rawMsg)
+	return err
+}
+
+func (c *Connection) sendInitMassage() {
+	content, reversion := c.Ot.GetContent()
+	msg := protocol.ServerMessage{
+		Init: &protocol.ServerInitMsg{
+			Reversion: reversion,
+			Content:   string(content),
+			UserID:    c.UserID,
+			Users:     c.Ot.GetUsers(),
+		},
+	}
+
+	c.SendMassage(msg)
 }
