@@ -52,9 +52,11 @@ function renderState(): void {
 
     const snapshot = client.getState();
     const send = snapshot.hasSend ? (snapshot.dispatched ? "sent" : "ready") : "none";
+    const userId = snapshot.userId.length > 8 ? snapshot.userId.slice(0, 8) : snapshot.userId;
 
     state.textContent =
         `receive=${snapshot.receiveReversion} send=${snapshot.sendReversion}` +
+        ` user=${userId || "(none)"}` +
         ` send_operator=${send} wait_operator=${snapshot.hasWait ? "held" : "none"}` +
         ` queued=${snapshot.queued}` +
         (snapshot.desynced ? " desync=yes, re-link to resync" : "");
@@ -101,6 +103,19 @@ async function pingServer(): Promise<void> {
 }
 
 /**
+ * The `user_id` the backend will stamp on our operations.
+ *
+ * `Connection.handlerMessage` copies it from the socket's user id onto every
+ * operator we send, and `MarshalJSON` writes it back out with each broadcast, so
+ * it is what lets "receive operator" tell our own confirmation from somebody
+ * else's edit.
+ */
+function currentUserId(): string {
+    const input = document.getElementById("user_id_input") as HTMLInputElement | null;
+    return input ? input.value.trim() : "";
+}
+
+/**
  * Open the socket and route every server frame into the local pending queue.
  *
  * The frames are deliberately *not* applied here: `onMessage` only parses and
@@ -112,6 +127,7 @@ function linkServer(): void {
             // A fresh socket means a fresh server session: drop the stale
             // revision, the in-flight operators and anything left queued.
             client.reset("", 0);
+            client.setUserId(currentUserId());
             writeTextarea("");
             renderState();
             writeLog("WebSocket connection established.", { kind: "info" });
@@ -155,13 +171,19 @@ function sendInitMsg(): void {
     };
 
     // The backend reads this as `protocol.ClientInitMessage` before it hands the
-    // socket to a Connection, so it must be the first frame after linking.
+    // socket to a Connection, so it must be the first frame after linking. The
+    // same id has to be registered locally: it is what marks an incoming operator
+    // as our own confirmation.
     client.reset(readTextarea(), 0);
+    client.setUserId(initMessage.user_id);
     sendJson(initMessage);
     renderState();
 
     console.log("Init message sent:", initMessage);
-    writeLog("Init message sent: " + JSON.stringify(initMessage), { kind: "send" });
+    writeLog(
+        line("Init message sent", JSON.stringify(initMessage), `own id=${initMessage.user_id || "(empty)"}`),
+        { kind: "send" },
+    );
 }
 
 /**

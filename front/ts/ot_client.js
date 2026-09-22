@@ -24,10 +24,12 @@
  *      * `edit`: `{reversion, operator: [op, op, ...]}` - the operations this
  *        socket has not seen yet, oldest first, where `reversion` is the revision
  *        the last of them produced. Every element is a *whole* operator
- *        (`{ops, reversion}`) as `Ot.applyEdit` stored it, i.e. already rebased
- *        onto all older history; its own `reversion` field is the base its
- *        author claimed (`Transform` copies it along), so it is an author hint,
- *        not the operator's position in the history.
+ *        (`{ops, reversion, id}`) as `Ot.applyEdit` stored it, i.e. already
+ *        rebased onto all older history. Its `id` is `protocol.Operator.UserID`,
+ *        stamped by `handlerMessage` from the socket the edit arrived on: it is
+ *        how a client recognizes its own operation in the broadcast. Its
+ *        `reversion` field is the base the author claimed, which `Transform`
+ *        copies along - an author hint, not the operator's position.
  *
  * LOCAL STATE - the task's pseudocode, name by name
  *
@@ -65,21 +67,35 @@
  *     stale, because nothing was sent yet).
  *  2. The echo branch promotes `waitOperator` into `sendOperator` and clears the
  *     wait slot; the pseudocode's trailing `send_operator <- nil` dropped the
- *     buffered edit on the floor.
+ *     buffered edit on the floor - and it is exactly the case "the operator I was
+ *     waiting for is confirmed and something else is buffered", i.e. the only
+ *     case where the promotion matters.
  *  3. `receive_reversion` advances on **every** server operation, echo included.
- *     Not advancing it makes the queue guard reject every later frame.
- *  4. The echo is not recognized by "the revision equals the revision I expect
- *     to land at": a *foreign* operation can occupy exactly that revision, and
- *     dropping it silently diverges the document. `isEcho()` uses the author hint
- *     the server carries along (the base revision the operator claimed) plus the
- *     atoms of the operator we predict the server applied.
- *  5. Both halves of every `transform` are kept: the sent operator is rebased
- *     onto each foreign operation (`sendOperator'`), so the next foreign
- *     operation is transformed against an operator based on the current
- *     document instead of a stale one, and so the echo test has something to
- *     compare against.
+ *     Not advancing it makes the queue guard reject every later frame and leaves
+ *     the next "calculate" thinking the sent operator is still unconfirmed.
+ *  4. An operation is ours when **the author says so**: `result_operator.id ==
+ *     userId` is the test, exactly as in the pseudocode. The revision comparison
+ *     the pseudocode uses instead (`result_reversion == send_reversion`) is only
+ *     a cross-check, because a *foreign* operation can occupy the revision we
+ *     predicted - and our own operation then lands one revision later, so
+ *     equality would both swallow a foreign edit and miss our own echo.
+ *     `ownOperation()` reports which rule matched, and falls back to
+ *     reconstructing identity when the id is empty: the backend's `Transform`
+ *     builds its results without copying `UserID`, so any operator that had to be
+ *     rebased onto history comes back without an author. Clearing that up is a
+ *     one-line change in `protocol/operator.go` (`aPrime := &Operator{...,
+ *     UserID: aOp.UserID}`).
+ *  5. Both halves of every `transform` are kept *and the arguments are passed in
+ *     the server's order* (`heldOperator.transform(arrivingOperator)`, mirroring
+ *     `Ot.applyEdit`'s `incoming.Transform(&historyOper)`): the first half is our
+ *     operator rebased onto the arriving one - the version the server will store -
+ *     and the second is the arriving operation rebased onto ours, which is what
+ *     the local text absorbs. The order is not cosmetic: `Transform` gives its
+ *     *second* operand the earlier slot when both insert at the same position, so
+ *     swapping the arguments makes two concurrent insertions merge in the
+ *     opposite order locally and in the history.
  *  6. `transform` is never called with a null operand and never called at all
- *     when nothing is held; when it throws (the backend branch that can only log
+ *     when nothing is held; when it throws (the backend branch that reports
  *     "unsupport operator") the frame goes back to the queue and the state is
  *     reported as desynced instead of being half-updated.
  *  7. Every incoming operation is checked against the document it claims to
@@ -242,10 +258,6 @@ export function operatorOutputBytes(operator) {
     }
     return total;
 }
-/** Render one canonical atom array for comparing two operators (echo check). */
-function atomSignature(operator) {
-    return JSON.stringify(operator.toOperatorField());
-}
 /* -------------------------------------------------------------------------- */
 /* Formatting                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -274,6 +286,10 @@ export function formatChunks(chunks) {
 /** Render an operator's wire form, the way "send operator" puts it on the socket. */
 export function formatOperatorJson(operator) {
     return JSON.stringify(operator.toOperatorField());
+}
+/** Shorten a user id for the log; a full UUID drowns the rest of the line. */
+function shortId(userId) {
+    return userId.length > 8 ? userId.slice(0, 8) : userId;
 }
 /** Shorthand for a successful action. */
 function ok(...lines) {
@@ -312,6 +328,25 @@ export class OtClient {
         this.frameSeq = 0;
         /** Set when an operation could not be merged, so the UI can say "re-link". */
         this.desynced = false;
+        /**
+         * The `user_id` this browser sent in its init message; every operation the
+         * server broadcasts under this id is our own, because
+         * `Connection.handlerMessage` stamps the socket's user id on the way in.
+         */
+        this.userId = "";
+    }
+    /**
+     * Adopt the identity "send init msg" registered with the server.
+     *
+     * It survives `reset()`: a re-link keeps the same user id, and it is what
+     * makes an operation recognizable as ours without guessing from revisions.
+     */
+    setUserId(userId) {
+        this.userId = userId;
+    }
+    /** @returns the user id own operations are recognized by. */
+    getUserId() {
+        return this.userId;
     }
     /** @returns the server document, i.e. the base of the next calculation. */
     getBaseText() {
@@ -348,6 +383,7 @@ export class OtClient {
             dispatched: this.dispatched,
             hasSend: this.sendOperator !== null,
             hasWait: this.waitOperator !== null,
+            userId: this.userId,
             queued: this.queue.length,
             desynced: this.desynced,
         };
@@ -380,6 +416,12 @@ export class OtClient {
     }
     /** Store the diff in its slot and adopt `inputText` as the local text. */
     commitDiff(slot, operator, inputText) {
+        // A locally built operator belongs to this client; `toOperatorField()`
+        // does not carry the id, so the server stamps it again on the way in, but
+        // keeping it here makes the state and the log honest.
+        if (operator) {
+            operator.userId = this.userId;
+        }
         if (slot === "send") {
             this.sendOperator = operator;
             this.dispatched = false;
@@ -648,25 +690,44 @@ export class OtClient {
         return { lines, ok: true, consumed: ops.length };
     }
     /**
-     * Whether `remote` is the broadcast of our own in-flight operator.
+     * Whether `remote` is our own operation coming back, and by which rule.
      *
-     * The wire carries no author, so identity has to be reconstructed:
-     * `Ot.applyEdit` stores the operator with the base revision its author
-     * claimed and `Transform` copies that field along, so our own operation comes
-     * back claiming the base we sent it with; the atoms must additionally match
-     * the operator we predict the server applied, which is ours rebased onto
-     * every foreign operation we have seen. Comparing the landing revision alone
-     * (the pseudocode's test) mistakes a foreign operation that happens to
-     * occupy that revision for our echo and drops it.
+     * The primary rule is the pseudocode's: `result_operator.id == userId`. The
+     * server stamps `protocol.Operator.UserID` from the socket the edit arrived
+     * on, so a broadcast carrying our id is our own operation - which means the
+     * local text already shows it and it must not be applied again.
+     *
+     * The revision comparison (`result_reversion == send_reversion`) is *not* a
+     * sound test on its own: a foreign operation can occupy the revision we
+     * predicted, and our own operation then lands one revision later. It is
+     * reported next to the answer instead, so a trace where the prediction was
+     * taken over by somebody else is visible.
+     *
+     * @returns `mine` plus the rule that decided it: `id` (the protocol said so),
+     *   `identity` (the id was empty and the base revision plus the predicted
+     *   atoms matched), or `none`.
      */
-    isEcho(remote) {
-        if (!this.dispatched || !this.sendOperator) {
-            return false;
+    ownOperation(remote) {
+        if (remote.userId !== "") {
+            return { mine: remote.userId === this.userId, by: "id" };
         }
-        if (remote.reversion !== this.sentBaseRevision) {
-            return false;
+        // `Transform` builds its results without copying `UserID`, so an operator
+        // that had to be rebased onto history arrives anonymous. Reconstruct
+        // identity from the two things we do know: the base revision our operator
+        // claimed, and the document it must have produced.
+        //
+        // The comparison is on the *effect*, not on the atoms: a rebase of the
+        // same operation through two call orders can spell the same edit as
+        // `Retain(1) Insert("X") Retain(10)` or `Insert("X") Retain(1) Retain(10)`,
+        // and the server's call order is not the client's. Equal effects also mean
+        // the local text already holds exactly what the operation did, which is
+        // the whole reason a confirmation is not applied.
+        if (this.dispatched && this.sendOperator && remote.reversion === this.sentBaseRevision) {
+            if (remote.apply(this.baseText) === this.pendingBaseText()) {
+                return { mine: true, by: "identity" };
+            }
         }
-        return atomSignature(remote) === atomSignature(this.sendOperator);
+        return { mine: false, by: "none" };
     }
     /**
      * `Operator.apply` copies what the atoms ask for and silently drops the rest,
@@ -700,44 +761,82 @@ export class OtClient {
         // again. What it does do is move the revision on and make the confirmed
         // document the one the waiting operator has been based on all along, which
         // is why the waiting operator is promoted here.
-        if (this.isEcho(remote)) {
+        const ownership = this.ownOperation(remote);
+        // The pseudocode's confirmation test, kept as a cross-check: the revision
+        // we predicted being taken by somebody else is exactly the trace that
+        // makes "the revision decides ownership" unsound.
+        const predicted = this.dispatched && position === this.sentBaseRevision + 1;
+        if (ownership.mine) {
             const newBase = remote.apply(this.baseText);
+            // Only an operation we were actually waiting for confirms the in-flight
+            // one and promotes what was buffered behind it. An own operation
+            // arriving with nothing in flight (a duplicate delivery) must not
+            // disturb the slot the next send uses.
+            const confirmed = this.dispatched;
             const promoted = this.waitOperator;
             this.baseText = newBase;
             this.reversion = position;
-            this.sendOperator = promoted;
-            this.waitOperator = null;
-            this.dispatched = false;
-            this.sentBaseRevision = -1;
-            lines.push(line(`    op[${index}]`, "echo", formatOperator(remote), `receive=${this.reversion}`, this.sendOperator ? `next send=${formatOperator(this.sendOperator)}` : "nothing left to send"), line("    base  ", JSON.stringify(this.baseText)));
-            lines.push(...this.checkInvariant("echo"));
+            if (confirmed) {
+                this.sendOperator = promoted;
+                this.waitOperator = null;
+                this.dispatched = false;
+                this.sentBaseRevision = -1;
+            }
+            lines.push(line(`    op[${index}]`, "own operation (confirmation)", `by=${ownership.by}`, `receive=${this.reversion}`, ownership.by === "id" ? `id=${shortId(remote.userId)}` : "id missing, identity reconstructed"), line("    base  ", JSON.stringify(this.baseText), "text unchanged", !confirmed
+                ? "(nothing was in flight)"
+                : this.sendOperator
+                    ? `next send=${formatOperator(this.sendOperator)}`
+                    : "nothing left to send"));
+            if (ownership.by === "identity") {
+                lines.push(line("    note  ", "the operation carries no id", "the backend's Transform does not copy UserID", "identity reconstructed from the base revision and the atoms"));
+            }
+            // A misclassified operation (a foreign edit read as ours) would leave
+            // the local text out of step with the confirmed document, which is
+            // exactly what this check looks for; it repairs and reports.
+            lines.push(...this.checkInvariant("confirmation"));
             return { lines, ok: true, consumed: 1 };
+        }
+        if (predicted) {
+            lines.push(line(`    op[${index}]`, "another author took the revision we predicted", `id=${remote.userId ? shortId(remote.userId) : "(none)"}`, "our own operation will land later"));
         }
         // A foreign operation. The local text already contains every held
         // operator, so the operation has to travel past them before it can be
-        // applied - and both halves of each transform are kept: the first is what
-        // the local text absorbs, the second is what the server will apply.
+        // applied - and both halves of each transform are kept.
+        //
+        // THE ARGUMENT ORDER MATTERS, and it has to mirror the server's:
+        // `Ot.applyEdit` rebases an arriving operator as
+        // `incoming.Transform(&historyOper)`, i.e. the operation being rebased is
+        // the receiver and the one it is rebased onto is the argument. When two
+        // clients insert at the same position the transform gives its *second*
+        // operand the earlier slot (see the insert branch of
+        // `Operator.transform`), so calling it the other way round orders the two
+        // insertions differently from the server: the confirmed document and the
+        // local text disagree ("helloworld12" against "helloworld21" in the
+        // harness scenario S10) even though both sides think they converged.
         let localOp = remote;
         let sendPrime = this.sendOperator;
         let waitPrime = this.waitOperator;
         if (sendPrime) {
-            const transformed = this.tryTransform(localOp, sendPrime);
+            const transformed = this.tryTransform(sendPrime, localOp);
             if (!transformed) {
                 this.desynced = true;
-                return { lines: [...lines, ...this.transformFailedLines(index, localOp, sendPrime)], ok: false, consumed: 0 };
+                return { lines: [...lines, ...this.transformFailedLines(index, sendPrime, localOp)], ok: false, consumed: 0 };
             }
-            localOp = transformed[0];
-            sendPrime = transformed[1];
+            // `[0]` is our operator rebased onto the arriving one - exactly what the
+            // server stores when our operator reaches it. `[1]` is the arriving
+            // operation rebased onto ours - what the local text absorbs.
+            sendPrime = transformed[0];
+            localOp = transformed[1];
             sendPrime.reversion = position;
         }
         if (waitPrime) {
-            const transformed = this.tryTransform(localOp, waitPrime);
+            const transformed = this.tryTransform(waitPrime, localOp);
             if (!transformed) {
                 this.desynced = true;
-                return { lines: [...lines, ...this.transformFailedLines(index, localOp, waitPrime)], ok: false, consumed: 0 };
+                return { lines: [...lines, ...this.transformFailedLines(index, waitPrime, localOp)], ok: false, consumed: 0 };
             }
-            localOp = transformed[0];
-            waitPrime = transformed[1];
+            waitPrime = transformed[0];
+            localOp = transformed[1];
             waitPrime.reversion = position + 1;
         }
         const newBase = remote.apply(this.baseText);
@@ -827,7 +926,7 @@ export class OtClient {
     stateLine(tag, reversion) {
         const state = this.getState();
         const rev = reversion === undefined ? state.receiveReversion : reversion;
-        return line(tag, `receive=${rev}`, `send=${state.sendReversion}`, `send_operator=${state.hasSend ? (state.dispatched ? "sent" : "ready") : "none"}`, `wait_operator=${state.hasWait ? "held" : "none"}`, `queued=${state.queued}`, `desync=${state.desynced ? "yes" : "no"}`);
+        return line(tag, `receive=${rev}`, `send=${state.sendReversion}`, `user=${state.userId ? shortId(state.userId) : "(none)"}`, `send_operator=${state.hasSend ? (state.dispatched ? "sent" : "ready") : "none"}`, `wait_operator=${state.hasWait ? "held" : "none"}`, `queued=${state.queued}`, `desync=${state.desynced ? "yes" : "no"}`);
     }
     /** The label of the batch that "receive operator" will apply next. */
     peekNextFrame() {

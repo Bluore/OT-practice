@@ -8,9 +8,12 @@
  *  - an operator is an ordered list of atoms: `retain(n)` / `insert(str)` /
  *    `remove(n)`, mirroring `protocol.Retain` / `protocol.Insert` /
  *    `protocol.Delete`;
- *  - the JSON form is `{"ops": [<string> | <positive number> | <negative number>], "reversion": <n>}`,
+ *  - the JSON form is `{"ops": [<string> | <positive number> | <negative number>], "reversion": <n>, "id": "<author>"}`,
  *    where a string is an insert, a positive number a retain and a negative
- *    number a delete - the encoding `protocol.Operator.MarshalJSON` produces;
+ *    number a delete - the encoding `protocol.Operator.MarshalJSON` produces.
+ *    `id` is `protocol.Operator.UserID`: `Connection.handlerMessage` stamps it
+ *    from the socket's user id before the operator is applied, and it is what
+ *    lets a client tell its own broadcast operation from somebody else's;
  *  - `transform(a, b)` returns `[a', b']` so that replaying `b` then `a'` and
  *    replaying `a` then `b'` reach the same document, using the same case
  *    analysis and remainder bookkeeping as Go's `Transform`;
@@ -113,9 +116,10 @@ function atomFromJson(item) {
  * Mirrors Go's `protocol.Operator`.
  */
 export class Operator {
-    constructor(ops = [], reversion = 0) {
+    constructor(ops = [], reversion = 0, userId = "") {
         this.ops = ops;
         this.reversion = reversion;
+        this.userId = userId;
     }
     /** Number of atoms; mirrors Go's `(*Operator).len()`. */
     get length() {
@@ -216,8 +220,8 @@ export class Operator {
     transform(other) {
         const aIt = new OperatorIterator(this);
         const bIt = new OperatorIterator(other);
-        const aPrime = new Operator([], this.reversion);
-        const bPrime = new Operator([], other.reversion);
+        const aPrime = new Operator([], this.reversion, this.userId);
+        const bPrime = new Operator([], other.reversion, other.userId);
         for (;;) {
             if (aIt.get() === null && bIt.get() === null) {
                 break;
@@ -358,7 +362,7 @@ export class Operator {
     }
     /** The operator in the JSON shape `protocol.Operator.MarshalJSON` emits. */
     toJSON() {
-        return { ops: this.toOpsArray(), reversion: this.reversion };
+        return { ops: this.toOpsArray(), reversion: this.reversion, id: this.userId };
     }
     /**
      * The bare atom array `protocol.Operator.UnmarshalJSON` accepts as input.
@@ -379,6 +383,7 @@ export class Operator {
     static fromJSON(value) {
         let rawOps;
         let reversion = 0;
+        let userId = "";
         if (Array.isArray(value)) {
             rawOps = value;
         }
@@ -388,6 +393,9 @@ export class Operator {
             if (typeof record.reversion === "number") {
                 reversion = Math.trunc(record.reversion);
             }
+            if (typeof record.id === "string") {
+                userId = record.id;
+            }
         }
         else {
             throw new Error(`operator must be an object or an array, got ${JSON.stringify(value)}`);
@@ -395,7 +403,7 @@ export class Operator {
         if (!Array.isArray(rawOps)) {
             throw new Error(`operator "ops" must be an array, got ${JSON.stringify(rawOps)}`);
         }
-        return new Operator(rawOps.map(atomFromJson), reversion);
+        return new Operator(rawOps.map(atomFromJson), reversion, userId);
     }
     /** Build an operator from JSON text; accepts either wire shape. */
     static parse(json) {

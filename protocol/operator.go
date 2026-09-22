@@ -18,6 +18,7 @@ type TypeOperator int
 type Operator struct {
 	Ops       []OperatorAtomic `json:"ops"`
 	Reversion uint32           `json:"reversion"`
+	UserID    string           `json:"id"`
 }
 
 func (o *Operator) len() int {
@@ -83,6 +84,7 @@ func (o *Operator) MarshalJSON() ([]byte, error) {
 	var data = map[string]any{
 		"ops":       ops,
 		"reversion": o.Reversion,
+		"id":        o.UserID,
 	}
 	return json.Marshal(data)
 }
@@ -204,10 +206,12 @@ func (aOp *Operator) Transform(bOp *Operator) (*Operator, *Operator, error) {
 	aPrime := &Operator{
 		Ops:       make([]OperatorAtomic, 0),
 		Reversion: aOp.Reversion,
+		UserID:    aOp.UserID,
 	}
 	bPrime := &Operator{
 		Ops:       make([]OperatorAtomic, 0),
 		Reversion: bOp.Reversion,
+		UserID:    bOp.UserID,
 	}
 
 	for {

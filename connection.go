@@ -109,6 +109,7 @@ func (c *Connection) readMessage() {
 func (c *Connection) handlerMessage(message protocol.ClientMessage) {
 	if message.Edit != nil {
 		message.Edit.Operator.Reversion = message.Edit.Reversion
+		message.Edit.Operator.UserID = c.UserID
 		c.Ot.applyEdit(&message.Edit.Operator)
 	}
 }
@@ -142,7 +143,7 @@ func (c *Connection) SendMassage(msg protocol.ServerMessage) error {
 		return err
 	}
 
-	logger.L.Debug("send msg", zap.String("user_id", c.UserID), zap.Any("msg", string(rawMsg)))
+	logger.L.Debug("send msg", zap.String("user_id", c.UserID), zap.Any("msg", msg))
 
 	err = c.Conn.WriteMessage(websocket.TextMessage, rawMsg)
 	return err
