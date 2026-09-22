@@ -142,6 +142,8 @@ func (c *Connection) SendMassage(msg protocol.ServerMessage) error {
 		return err
 	}
 
+	logger.L.Debug("send msg", zap.String("user_id", c.UserID), zap.Any("msg", string(rawMsg)))
+
 	err = c.Conn.WriteMessage(websocket.TextMessage, rawMsg)
 	return err
 }
@@ -156,6 +158,7 @@ func (c *Connection) sendInitMassage() {
 			Users:     c.Ot.GetUsers(),
 		},
 	}
+	c.Reversion = reversion
 
 	c.SendMassage(msg)
 }

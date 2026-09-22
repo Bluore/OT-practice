@@ -53,7 +53,7 @@ func (o *Operator) UnmarshalJSON(data []byte) error {
 				}
 			} else {
 				op = Delete{
-					N: int(v),
+					N: int(-v),
 				}
 			}
 		default:
@@ -275,7 +275,7 @@ func (aOp *Operator) Transform(bOp *Operator) (*Operator, *Operator, error) {
 					aIt.refesh(NewRetain(a.N - b.N))
 					bIt.next()
 				} else {
-					bPrime.Ops = append(aPrime.Ops, NewDelete(a.N))
+					bPrime.Ops = append(bPrime.Ops, NewDelete(a.N))
 					aIt.next()
 					bIt.refesh(NewRetain(b.N - a.N))
 				}

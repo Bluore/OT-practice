@@ -117,6 +117,7 @@ func (o *Ot) applyEdit(oper *protocol.Operator) {
 	if oper.Reversion < uint32(len(o.Ops)) {
 		operPrime = oper
 		for _, historyOper := range o.Ops[oper.Reversion:] {
+			logger.L.Debug("transform", zap.Any("a", operPrime), zap.Any("b", historyOper))
 			operPrime, _, err = operPrime.Transform(&historyOper)
 			if err != nil {
 				logger.L.Error("transform error:unsupport operator")
@@ -132,5 +133,5 @@ func (o *Ot) applyEdit(oper *protocol.Operator) {
 
 	o.NotifyEdit()
 
-	logger.L.Info("apply edit", zap.Any("oper", oper), zap.Any("text", o.Content))
+	logger.L.Info("apply edit", zap.Any("oper", oper), zap.Any("text", string(o.Content)))
 }
