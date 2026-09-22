@@ -5,37 +5,119 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OT-practice</title>
     <script type="module" src="./ts/index.js" defer></script>
+    <style>
+        body {
+            font-family: "Segoe UI", system-ui, sans-serif;
+            margin: 16px;
+            line-height: 1.5;
+        }
+
+        #edit-area textarea {
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 14px;
+            padding: 6px;
+            width: min(100%, 640px);
+            box-sizing: border-box;
+        }
+
+        #client-state {
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 12px;
+            color: #555;
+            margin: 6px 0;
+        }
+
+        .logger-area {
+            margin-top: 16px;
+        }
+
+        .log-list {
+            max-height: 320px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 6px 8px;
+            background: #fafafa;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 12px;
+        }
+
+        .log-line {
+            display: flex;
+            gap: 10px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            border-bottom: 1px dotted #e0e0e0;
+            padding: 1px 0;
+        }
+
+        .log-time {
+            color: #999;
+            flex: none;
+        }
+
+        .log-text {
+            flex: none;
+        }
+
+        .log-field {
+            color: #0a5;
+            flex: none;
+        }
+
+        .log-detail {
+            padding-left: 24px;
+            color: #444;
+        }
+
+        .log-send .log-text {
+            color: #0645ad;
+            font-weight: 600;
+        }
+
+        .log-receive .log-text {
+            color: #7a3e9d;
+            font-weight: 600;
+        }
+
+        .log-error .log-text {
+            color: #b00020;
+            font-weight: 600;
+        }
+    </style>
 </head>
 <body>
     <button id="pingServer" onclick="pingServer()">ping server</button>
 
     <div id="start-area">
         <button id="linkServer" onclick="linkServer()">link server</button>
-    </div>   
-        
+    </div>
+
     <div id="init-server-area">
-            
+
         <input type="text" id="user_name_input">
 
         <input type="text" id="user_id_input" disabled>
-        
+
         <button id="send-init-msg" onclick="sendInitMsg()">send init msg</button>
     </div>
-        
+
     <div id="edit-area">
 
         <textarea id="edit_msg_textarea" rows="6" cols="60" placeholder="input content..."></textarea>
-            
-        <br class="">
 
-        <button id="calculate-operator">calculate operator</button>
+        <br>
 
-        <button id="send-edit-operator">send operator</button>
+        <button id="calculate-operator" onclick="calculateOperator()">calculate operator</button>
 
-        <button id="receive-edit-operator">receive operator</button>
+        <button id="send-edit-operator" onclick="sendOperator()">send operator</button>
+
+        <button id="receive-edit-operator" onclick="receiveOperator()">receive operator</button>
 
     </div>
-        
+
+    <div id="client-state">receive=0 send=-1 send_operator=none wait_operator=none queued=0</div>
+
     <div id="logger" class="logger-area">
 
         <button id="clear-log" onclick="clearLog()">clear log</button>
@@ -43,8 +125,6 @@
         <div id="log_list" class="log-list"></div>
 
     </div>
-        
-</br>
 
 </body>
 </html>
